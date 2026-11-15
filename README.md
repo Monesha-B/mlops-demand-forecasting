@@ -1,5 +1,9 @@
 # MLOps Demand Forecasting Pipeline
 
+**[Try the live Streamlit demo](https://mlops-demand-forecasting-demo.streamlit.app/)** · [GitHub Actions](https://github.com/Monesha-B/mlops-demand-forecasting/actions)
+
+> The public demo is self-contained and uses synthetic retail data. PostgreSQL, FastAPI, MLflow, and Airflow run in the full local Docker stack; the hosted demo does not expose those backend services.
+
 A portfolio-ready end-to-end demand forecasting example using **Python, Pandas, NumPy, scikit-learn, MLflow, PostgreSQL, FastAPI, Streamlit, Docker, Pytest, GitHub Actions, and Apache Airflow**.
 
 **Demo workflow:** generate realistic *synthetic* daily store/product sales, build leakage-aware lag and calendar features, fit a Random Forest, evaluate on the most recent 28 days, log MLflow metrics, serve forecasts over FastAPI, and visualize an interactive 1–14-day forecast in Streamlit. Data and predictions are illustrative, not business forecasts.
@@ -52,7 +56,7 @@ streamlit run dashboard/app.py
 
 Visit http://localhost:8501 (dashboard), http://localhost:8000/docs (interactive API), and http://localhost:8000/health.
 
-To use **MLflow locally** instead of `--no-mlflow`, run `python -m src.pipeline.run` and then `mlflow ui --backend-store-uri ./mlruns --port 5000`. MLflow runs are stored in `mlruns/`.
+For full local MLflow tracking, use the PostgreSQL-backed Docker Compose stack below; the filesystem-based `mlruns/` backend is deprecated in recent MLflow versions.
 
 ## Option B — run PostgreSQL, MLflow, API, Streamlit with Docker
 
@@ -62,28 +66,29 @@ Requires Docker Desktop running (allow several GB of memory for container images
 cd ~/Downloads/mlops-demand-forecasting
 cp .env.example .env  # first run only; choose a private TRAINING_TOKEN
 # edit .env to change TRAINING_TOKEN from the example before exposing API anywhere
-docker compose up --build
+docker compose up -d --build postgres mlflow api dashboard
 ```
 
 Open:
 
-- Streamlit: http://localhost:8501
-- FastAPI docs: http://localhost:8000/docs
-- MLflow: http://localhost:5000
-- PostgreSQL: `localhost:5432`, credentials from `.env` or compose defaults; local development only
+- Streamlit: http://localhost:8522
+- FastAPI docs: http://localhost:8002/docs
+- MLflow: http://localhost:5002
+- PostgreSQL: `localhost:5433` (container port `5432`), credentials from `.env` or Compose defaults; local development only
 
 The API service initializes the dataset in PostgreSQL and trains the model on startup. To run SQL ingestion and training from your host Conda environment instead:
 
 ```bash
-export DATABASE_URL=postgresql+psycopg2://forecast:forecast@localhost:5432/forecast
+export DATABASE_URL=postgresql+psycopg2://forecast:forecast@localhost:5433/forecast
 python -m src.pipeline.run --sync-db --use-db
 ```
 
 To start **Airflow** as well (optional, much larger image):
 
 ```bash
+# Create an 'airflow' database in the same PostgreSQL container first.
 docker compose --profile orchestration up --build -d
-# UI: http://localhost:8080
+# UI: http://localhost:8081
 # Look in Airflow container logs for standalone admin password:
 docker compose logs airflow
 ```
@@ -146,6 +151,8 @@ git push -u origin main
 3. `dashboard/requirements.txt` installs only the lean demo stack, rather than heavyweight server components.
 4. The dashboard generates synthetic data and trains a local demo model on first launch if no API is configured. **No PostgreSQL, API hosting or paid model keys required** for the public demo.
 5. Test different store/product combinations and forecast horizons in the public URL.
+
+Live app: https://mlops-demand-forecasting-demo.streamlit.app/
 
 Public demo mode is a lightweight subset; the full Docker stack (PostgreSQL, MLflow, Airflow and API) runs locally. For a fully public API, deploy the API separately with protected retraining, persistent model storage, HTTPS and proper authorization.
 
