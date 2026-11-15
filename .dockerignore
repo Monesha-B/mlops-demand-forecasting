@@ -1,0 +1,9 @@
+.git
+.env
+__pycache__
+.pytest_cache
+mlruns
+artifacts
+data/raw
+data/processed
+*.pyc

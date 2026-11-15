@@ -1,0 +1,99 @@
+# Project 3: local Docker stack. PostgreSQL is the ONLY database server.
+# Host ports deliberately avoid the native Python servers already running on this Mac.
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-forecast}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-forecast}
+      POSTGRES_DB: ${POSTGRES_DB:-forecast}
+    ports:
+      - "127.0.0.1:5433:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 5s
+      retries: 15
+
+  mlflow:
+    build: .
+    command: >
+      mlflow server
+      --backend-store-uri postgresql+psycopg2://${POSTGRES_USER:-forecast}:${POSTGRES_PASSWORD:-forecast}@postgres:5432/${POSTGRES_DB:-forecast}
+      --artifacts-destination /app/mlflow-artifacts
+      --host 0.0.0.0 --port 5000
+      --allowed-hosts mlflow:5000,localhost:5000,127.0.0.1:5000,localhost:5002,127.0.0.1:5002
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:5002:5000"
+    volumes:
+      - ./mlflow-artifacts:/app/mlflow-artifacts
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5000/health', timeout=5)"]
+      interval: 10s
+      timeout: 10s
+      retries: 15
+      start_period: 30s
+
+  api:
+    build: .
+    command: >
+      sh -c "python -m src.pipeline.run --sync-db --use-db &&
+      uvicorn api.main:app --host 0.0.0.0 --port 8000"
+    environment:
+      DATABASE_URL: postgresql+psycopg2://${POSTGRES_USER:-forecast}:${POSTGRES_PASSWORD:-forecast}@postgres:5432/${POSTGRES_DB:-forecast}
+      MLFLOW_TRACKING_URI: http://mlflow:5000
+      TRAINING_TOKEN: ${TRAINING_TOKEN:-change-this-to-a-random-long-secret}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      mlflow:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:8002:8000"
+    volumes:
+      - ./data:/app/data
+      - ./artifacts:/app/artifacts
+
+  dashboard:
+    build: .
+    command: streamlit run dashboard/app.py --server.address 0.0.0.0 --server.port 8501 --server.headless true
+    environment:
+      API_URL: http://api:8000
+    depends_on:
+      - api
+    ports:
+      - "127.0.0.1:8522:8501"
+    volumes:
+      - ./data:/app/data
+      - ./artifacts:/app/artifacts
+
+  # Do not launch Airflow yet; its metadata DB needs a dedicated PostgreSQL
+  # schema/configuration before using the orchestration profile.
+  airflow:
+    image: apache/airflow:2.10.5-python3.11
+    profiles: ["orchestration"]
+    command: standalone
+    environment:
+      AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+      AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "true"
+      AIRFLOW__CORE__EXECUTOR: SequentialExecutor
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${POSTGRES_USER:-forecast}:${POSTGRES_PASSWORD:-forecast}@postgres:5432/airflow
+      AIRFLOW__WEBSERVER__EXPOSE_CONFIG: "false"
+      TRAINING_TOKEN: ${TRAINING_TOKEN:-change-this-to-a-random-long-secret}
+      API_URL: http://api:8000
+    ports:
+      - "127.0.0.1:8081:8080"
+    depends_on:
+      - api
+    volumes:
+      - ./airflow/dags:/opt/airflow/dags:ro
+      - airflowdata:/opt/airflow
+
+volumes:
+  pgdata:
+  airflowdata:
